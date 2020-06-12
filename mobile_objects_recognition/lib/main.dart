@@ -5,134 +5,91 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
+import 'package:mobile_objects_recognition/dl_models_enum.dart';
+import 'package:mobile_objects_recognition/object_recognizer.dart';
+import 'package:mobile_objects_recognition/object_recognizer_factory.dart';
 
 import 'package:tflite/tflite.dart';
-import 'package:image_picker/image_picker.dart';
 
-void main() => runApp(new App());
+import 'package:camera/camera.dart';
 
-const String mobile = "MobileNet";
-const String ssd = "SSD MobileNet";
-const String yolo = "Tiny YOLOv2";
-const String deeplab = "DeepLab";
-const String posenet = "PoseNet";
+List<CameraDescription> cameras;
 
-class App extends StatelessWidget {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  cameras = await availableCameras();
+  runApp(MainApp());
+}
+
+class MainApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      home: MyApp(),
+      title: "Objects Recognizer",
+      home: ObjectRecognizerWidget(),
     );
   }
 }
 
-class MyApp extends StatefulWidget {
+class ObjectRecognizerWidget extends StatefulWidget {
   @override
-  _MyAppState createState() => new _MyAppState();
+  _ObjectRecognizerState createState() => _ObjectRecognizerState();
 }
 
-class _MyAppState extends State<MyApp> {
+class _ObjectRecognizerState extends State<ObjectRecognizerWidget> {
+  CameraController _cameraController;
+  ObjectRecognizer _recognizer;
+  ObjectRecognizerFactory _factory;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeCamera();
+  }
+
+  @override
+  void dispose() {
+    _cameraController?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_cameraController.value.isInitialized) {
+      return Container();
+    }
+    return AspectRatio(
+        aspectRatio: _cameraController.value.aspectRatio,
+        child: CameraPreview(_cameraController));
+  }
+
+  void _initializeCamera() async {
+    _factory = new ObjectRecognizerFactory();
+    _recognizer = _factory.createRecognizer(DLModelsEnum.SSD_COCO_MOBILE_NET);
+
+    _cameraController =
+        new CameraController(cameras[0], ResolutionPreset.veryHigh);
+
+    _cameraController.initialize().then((_) async {
+      await _cameraController
+          .startImageStream((CameraImage image) => _processCameraImage(image));
+
+      setState(() {});
+    });
+  }
+
+  void _processCameraImage(CameraImage img) async {
+    _recognizer.detectObjectsInFrame(img);
+  }
+}
+
+class _MyAppState extends State<ObjectRecognizerWidget> {
   File _image;
   List _recognitions;
   String _model = mobile;
   double _imageHeight;
   double _imageWidth;
   bool _busy = false;
-
-  Future predictImagePicker() async {
-    var image = await ImagePicker.pickImage(source: ImageSource.gallery);
-    if (image == null) return;
-    setState(() {
-      _busy = true;
-    });
-    predictImage(image);
-  }
-
-  Future predictImage(File image) async {
-    if (image == null) return;
-
-    switch (_model) {
-      case yolo:
-        await yolov2Tiny(image);
-        break;
-      case ssd:
-        await ssdMobileNet(image);
-        break;
-      case deeplab:
-        await segmentMobileNet(image);
-        break;
-      case posenet:
-        await poseNet(image);
-        break;
-      default:
-        await recognizeImage(image);
-      // await recognizeImageBinary(image);
-    }
-
-    new FileImage(image)
-        .resolve(new ImageConfiguration())
-        .addListener(ImageStreamListener((ImageInfo info, bool _) {
-      setState(() {
-        _imageHeight = info.image.height.toDouble();
-        _imageWidth = info.image.width.toDouble();
-      });
-    }));
-
-    setState(() {
-      _image = image;
-      _busy = false;
-    });
-  }
-
-  @override
-  void initState() {
-    super.initState();
-
-    _busy = true;
-
-    loadModel().then((val) {
-      setState(() {
-        _busy = false; 
-      });
-    });
-  }
-
-  Future loadModel() async {
-    Tflite.close();
-    try {
-      String res;
-      switch (_model) {
-        case yolo:
-          res = await Tflite.loadModel(
-            model: "assets/yolov2_tiny.tflite",
-            labels: "assets/yolov2_tiny.txt",
-          );
-          break;
-        case ssd:
-          res = await Tflite.loadModel(
-              model: "assets/coco_ssd_mobilenet_v1_1.0_quant.tflite",
-              labels: "assets/coco_ssd_mobilenet_v1_1.0_quant.txt");
-          break;
-        case deeplab:
-          res = await Tflite.loadModel(
-              model: "assets/deeplabv3_257_mv_gpu.tflite");
-          break;
-        case posenet:
-          res = await Tflite.loadModel(
-              model: "assets/posenet_mobilenet_v1_100_257x257_multi_kpt_stripped.tflite");
-          break;
-        default:
-          res = await Tflite.loadModel(
-            model: "assets/mobilenet_v1_1.0_224_quant.tflite",
-            labels: "assets/mobilenet_v1_1.0_224_quant.txt",
-          );
-      }
-      print(res);
-    } on PlatformException catch(e) {
-      print('Failed to load model.');
-      print(e);
-    }
-  }
 
   Uint8List imageToByteListFloat32(
       img.Image image, int inputSize, double mean, double std) {
@@ -163,114 +120,6 @@ class _MyAppState extends State<MyApp> {
       }
     }
     return convertedBytes.buffer.asUint8List();
-  }
-
-  Future recognizeImage(File image) async {
-    var recognitions = await Tflite.runModelOnImage(
-      path: image.path,
-      numResults: 6,
-      threshold: 0.05,
-      imageMean: 127.5,
-      imageStd: 127.5,
-    );
-    setState(() {
-      _recognitions = recognitions;
-    });
-  }
-
-  Future recognizeImageBinary(File image) async {
-    var imageBytes = (await rootBundle.load(image.path)).buffer;
-    img.Image oriImage = img.decodeJpg(imageBytes.asUint8List());
-    img.Image resizedImage = img.copyResize(oriImage, height: 224, width: 224);
-    var recognitions = await Tflite.runModelOnBinary(
-      binary: imageToByteListFloat32(resizedImage, 224, 127.5, 127.5),
-      numResults: 6,
-      threshold: 0.05,
-    );
-    setState(() {
-      _recognitions = recognitions;
-    });
-  }
-
-  Future yolov2Tiny(File image) async {
-    var recognitions = await Tflite.detectObjectOnImage(
-      path: image.path,
-      model: "YOLO",
-      threshold: 0.3,
-      imageMean: 0.0,
-      imageStd: 255.0,
-      numResultsPerClass: 1,
-    );
-    // var imageBytes = (await rootBundle.load(image.path)).buffer;
-    // img.Image oriImage = img.decodeJpg(imageBytes.asUint8List());
-    // img.Image resizedImage = img.copyResize(oriImage, 416, 416);
-    // var recognitions = await Tflite.detectObjectOnBinary(
-    //   binary: imageToByteListFloat32(resizedImage, 416, 0.0, 255.0),
-    //   model: "YOLO",
-    //   threshold: 0.3,
-    //   numResultsPerClass: 1,
-    // );
-    setState(() {
-      _recognitions = recognitions;
-    });
-  }
-
-  Future ssdMobileNet(File image) async {
-    var recognitions = await Tflite.detectObjectOnImage(
-      path: image.path,
-      numResultsPerClass: 1,
-    );
-    // var imageBytes = (await rootBundle.load(image.path)).buffer;
-    // img.Image oriImage = img.decodeJpg(imageBytes.asUint8List());
-    // img.Image resizedImage = img.copyResize(oriImage, 300, 300);
-    // var recognitions = await Tflite.detectObjectOnBinary(
-    //   binary: imageToByteListUint8(resizedImage, 300),
-    //   numResultsPerClass: 1,
-    // );
-    setState(() {
-      _recognitions = recognitions;
-    });
-  }
-
-  Future segmentMobileNet(File image) async {
-    var recognitions = await Tflite.runSegmentationOnImage(
-      path: image.path,
-      imageMean: 127.5,
-      imageStd: 127.5,
-    );
-
-    setState(() {
-      _recognitions = recognitions;
-    });
-  }
-
-  Future poseNet(File image) async {
-    var recognitions = await Tflite.runPoseNetOnImage(
-      path: image.path,
-      numResults: 2,
-    );
-
-    print(recognitions);
-
-    setState(() {
-      _recognitions = recognitions;
-    });
-  }
-
-  onSelect(model) async {
-    setState(() {
-      _busy = true;
-      _model = model;
-      _recognitions = null;
-    });
-    await loadModel();
-
-    if (_image != null)
-      predictImage(_image);
-    else
-      setState(() {
-        _busy = false;
-      });
   }
 
   List<Widget> renderBoxes(Size screen) {
