@@ -10,7 +10,6 @@ import 'package:mobile_objects_recognition/object_recognizer.dart';
 import 'package:mobile_objects_recognition/object_recognizer_factory.dart';
 
 import 'package:tflite/tflite.dart';
-
 import 'package:camera/camera.dart';
 
 List<CameraDescription> cameras;
@@ -79,7 +78,11 @@ class _ObjectRecognizerState extends State<ObjectRecognizerWidget> {
   }
 
   void _processCameraImage(CameraImage img) async {
-    _recognizer.detectObjectsInFrame(img);
+    List recognitions = await _recognizer.detectObjectsInFrame(img);
+
+    if (recognitions != null) {
+      print(recognitions.length);
+    }
   }
 }
 
@@ -254,7 +257,6 @@ class _MyAppState extends State<ObjectRecognizerWidget> {
         title: const Text('tflite example app'),
         actions: <Widget>[
           PopupMenuButton<String>(
-            onSelected: onSelect,
             itemBuilder: (context) {
               List<PopupMenuEntry<String>> menuEntries = [
                 const PopupMenuItem<String>(
@@ -287,7 +289,6 @@ class _MyAppState extends State<ObjectRecognizerWidget> {
         children: stackChildren,
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: predictImagePicker,
         tooltip: 'Pick Image',
         child: Icon(Icons.image),
       ),

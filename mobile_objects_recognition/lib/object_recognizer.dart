@@ -2,18 +2,18 @@ import 'package:camera/camera.dart';
 import 'package:tflite/tflite.dart';
 
 abstract class ObjectRecognizer {
-  detectObjectsInFrame(CameraImage img);
+  Future<List> detectObjectsInFrame(CameraImage img);
 }
 
 class SsdCocoMobileNetObjectRecognizer extends ObjectRecognizer {
   bool _isDetecting = false;
 
   @override
-  detectObjectsInFrame(CameraImage img) {
+  Future<List> detectObjectsInFrame(CameraImage img) async {
     int startTime = new DateTime.now().millisecondsSinceEpoch;
     if (!_isDetecting) {
       _isDetecting = true;
-      Tflite.detectObjectOnFrame(
+      var recognitions = await Tflite.detectObjectOnFrame(
         bytesList: img.planes.map((plane) {
           return plane.bytes;
         }).toList(),
@@ -24,11 +24,15 @@ class SsdCocoMobileNetObjectRecognizer extends ObjectRecognizer {
         imageStd: 127.5,
         numResultsPerClass: 1,
         threshold: 0.4,
-      ).then((recognitions) {
-        int endTime = new DateTime.now().millisecondsSinceEpoch;
-        print("Detection took ${endTime - startTime}");
-        _isDetecting = false;
-      });
+      );
+
+      int endTime = new DateTime.now().millisecondsSinceEpoch;
+      print("Detection took ${endTime - startTime}");
+      _isDetecting = false;
+
+      return recognitions;
+    } else {
+      return null;
     }
   }
 }
